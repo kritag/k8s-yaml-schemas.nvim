@@ -55,10 +55,9 @@ end
 
 -- Extract apiVersion and kind from buffer content
 M.extract_api_version_and_kind = function(buffer_content)
-	-- Remove leading document separators if any
 	buffer_content = buffer_content:gsub("^%s*%-%-%-%s*\n", "")
-	local api_version = buffer_content:match("apiVersion:%s*([%w%p]+)")
-	local kind = buffer_content:match("kind:%s*([%w%-]+)")
+	local api_version = buffer_content:match("apiVersion:%s*['\"]?([%w%p/]+)['\"]?")
+	local kind = buffer_content:match("kind:%s*['\"]?([%w%-]+)['\"]?")
 	return api_version, kind
 end
 
