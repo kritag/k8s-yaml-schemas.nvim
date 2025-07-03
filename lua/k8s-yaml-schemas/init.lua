@@ -160,16 +160,22 @@ M.init = function(bufnr)
 		vim.notify("yaml-language-server is not active.", vim.log.levels.WARN)
 		return
 	end
+
 	local yaml_client = clients[1]
 	yaml_client.config.settings = yaml_client.config.settings or {}
 	yaml_client.config.settings.yaml = yaml_client.config.settings.yaml or {}
 	yaml_client.config.settings.yaml.schemas = yaml_client.config.settings.yaml.schemas or {}
-
 	local schemas = yaml_client.config.settings.yaml.schemas
 
 	for _, doc in ipairs(docs) do
-		local api_version, kind = M.extract_api_version_and_kind(doc)
-		if api_version and kind then
+		-- Skip documents that don't contain both apiVersion and kind
+		if doc:match("apiVersion:") and doc:match("kind:") then
+			local api_version, kind = M.extract_api_version_and_kind(doc)
+			print("--- Document ---")
+			print(doc)
+			print("apiVersion:", api_version)
+			print("kind:", kind)
+
 			local schema_url = nil
 
 			-- Try Flux schemas first
@@ -197,7 +203,7 @@ M.init = function(bufnr)
 				vim.notify("No schema found for " .. kind .. " (" .. api_version .. ")", vim.log.levels.WARN)
 			end
 		else
-			vim.notify("Document missing apiVersion or kind, skipping schema attach", vim.log.levels.WARN)
+			vim.notify("Skipping non-resource document", vim.log.levels.INFO)
 		end
 	end
 
