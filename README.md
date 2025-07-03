@@ -101,4 +101,5 @@ require("k8s_yaml_schema").init(0) -- 0 = current buffer
 
 ## 📝 License
 
-MIT © 2025 kritag
+This project is licensed under the terms of the **GNU General Public License v3.0**.
+See [LICENSE](./LICENSE) for details.
