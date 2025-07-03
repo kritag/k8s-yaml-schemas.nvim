@@ -33,31 +33,11 @@ M.list_github_tree = function()
 	return trees
 end
 
--- Split buffer lines into multiple YAML documents by ---
-local function split_documents(lines)
-	local docs = {}
-	local current = {}
-	for _, line in ipairs(lines) do
-		if line:match("^%-%-%-$") then
-			if #current > 0 then
-				table.insert(docs, table.concat(current, "\n"))
-				current = {}
-			end
-		else
-			table.insert(current, line)
-		end
-	end
-	if #current > 0 then
-		table.insert(docs, table.concat(current, "\n"))
-	end
-	return docs
-end
-
 -- Extract apiVersion and kind from buffer content
 M.extract_api_version_and_kind = function(buffer_content)
-	buffer_content = buffer_content:gsub("^%s*%-%-%-%s*\n", "")
-	local api_version = buffer_content:match("apiVersion:%s*['\"]?([%w%p/]+)['\"]?")
-	local kind = buffer_content:match("kind:%s*['\"]?([%w%-]+)['\"]?")
+	buffer_content = buffer_content:gsub("%-%-%-%s*\n", "")
+	local api_version = buffer_content:match("apiVersion:%s*([%w%p]+)")
+	local kind = buffer_content:match("kind:%s*([%w%-]+)")
 	return api_version, kind
 end
 
@@ -90,7 +70,7 @@ M.match_crd = function(buffer_content)
 	return nil
 end
 
--- Attach schema to current buffer, scoped by filename (can attach multiple)
+-- Attach schema to current buffer, scoped by filename
 M.attach_schema = function(schema_url, description, bufnr)
 	local clients = vim.lsp.get_clients({ name = "yamlls" })
 	if #clients == 0 then
@@ -101,22 +81,8 @@ M.attach_schema = function(schema_url, description, bufnr)
 	yaml_client.config.settings = yaml_client.config.settings or {}
 	yaml_client.config.settings.yaml = yaml_client.config.settings.yaml or {}
 	yaml_client.config.settings.yaml.schemas = yaml_client.config.settings.yaml.schemas or {}
-
 	local bufname = vim.api.nvim_buf_get_name(bufnr)
-	-- If schema_url already assigned, append buffer, else create new
-	local existing = yaml_client.config.settings.yaml.schemas[schema_url]
-	if existing then
-		-- Avoid duplicate buffer entries
-		for _, b in ipairs(existing) do
-			if b == bufname then
-				return
-			end
-		end
-		table.insert(existing, bufname)
-	else
-		yaml_client.config.settings.yaml.schemas[schema_url] = { bufname }
-	end
-
+	yaml_client.config.settings.yaml.schemas[schema_url] = { bufname }
 	yaml_client.notify("workspace/didChangeConfiguration", {
 		settings = yaml_client.config.settings,
 	})
@@ -152,72 +118,37 @@ M.init = function(bufnr)
 	end
 	vim.b[bufnr].schema_attached = true
 
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local docs = split_documents(lines)
+	local buffer_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+	local crd = M.match_crd(buffer_content)
 
-	local clients = vim.lsp.get_clients({ name = "yamlls" })
-	if #clients == 0 then
-		vim.notify("yaml-language-server is not active.", vim.log.levels.WARN)
+	local api_version, kind = M.extract_api_version_and_kind(buffer_content)
+
+	-- Try Flux match
+	local flux_url, flux_name = M.match_flux_crd(api_version, kind)
+	if flux_url then
+		M.attach_schema(flux_url, "Flux schema for " .. flux_name, bufnr)
 		return
 	end
 
-	local yaml_client = clients[1]
-	yaml_client.config.settings = yaml_client.config.settings or {}
-	yaml_client.config.settings.yaml = yaml_client.config.settings.yaml or {}
-	yaml_client.config.settings.yaml.schemas = yaml_client.config.settings.yaml.schemas or {}
-	local schemas = yaml_client.config.settings.yaml.schemas
-
-	for _, doc in ipairs(docs) do
-		-- Skip documents that don't contain both apiVersion and kind
-		if doc:match("apiVersion:") and doc:match("kind:") then
-			local api_version, kind = M.extract_api_version_and_kind(doc)
-			print("--- Document ---")
-			print(doc)
-			print("apiVersion:", api_version)
-			print("kind:", kind)
-
-			local schema_url = nil
-
-			-- Try Flux schemas first
-			if M.match_flux_crd then
-				schema_url = select(1, M.match_flux_crd(api_version, kind))
-			end
-
-			-- Try custom CRDs
-			if not schema_url then
-				local crd = M.match_crd(doc)
-				if crd then
-					schema_url = M.schema_url .. "/" .. crd
-				end
-			end
-
-			-- Fallback to core k8s schema
-			if not schema_url then
-				schema_url = M.get_kubernetes_schema_url(api_version, kind)
-			end
-
-			if schema_url then
-				local selector = string.format('.*[?(@.kind=="%s" && @.apiVersion=="%s")]', kind, api_version)
-				schemas[schema_url] = selector
-
-				-- 🔍 Add logging
-				print("📦 Attaching schema:")
-				print("URL: " .. schema_url)
-				print("Selector: " .. selector)
-				vim.notify("📦 Attached schema: " .. schema_url, vim.log.levels.INFO)
+	if crd then
+		local schema_url = M.schema_url .. "/" .. crd
+		M.attach_schema(schema_url, "CRD schema for " .. crd, bufnr)
+	else
+		-- local api_version, kind = M.extract_api_version_and_kind(buffer_content)
+		if api_version and kind then
+			local url = M.get_kubernetes_schema_url(api_version, kind)
+			if url then
+				M.attach_schema(url, "Kubernetes schema for " .. kind, bufnr)
 			else
-				vim.notify("No schema found for " .. kind .. " (" .. api_version .. ")", vim.log.levels.WARN)
+				vim.notify("No Kubernetes schema found for " .. kind .. " (" .. api_version .. ")", vim.log.levels.WARN)
 			end
 		else
-			vim.notify("Skipping non-resource document", vim.log.levels.INFO)
+			vim.notify(
+				"No CRD or Kubernetes schema found. Falling back to default LSP configuration.",
+				vim.log.levels.WARN
+			)
 		end
 	end
-
-	yaml_client.notify("workspace/didChangeConfiguration", {
-		settings = yaml_client.config.settings,
-	})
-
-	vim.notify("Attached schemas using JSON path selectors", vim.log.levels.INFO)
 end
 
 M.list_flux_schemas = function()
