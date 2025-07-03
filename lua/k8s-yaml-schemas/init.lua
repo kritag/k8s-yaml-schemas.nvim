@@ -155,41 +155,7 @@ M.init = function(bufnr)
 
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local docs = split_documents(lines)
-	local bufname = vim.api.nvim_buf_get_name(bufnr)
-	local schema_urls = {}
 
-	for _, doc in ipairs(docs) do
-		local api_version, kind = M.extract_api_version_and_kind(doc)
-
-		if api_version and kind then
-			-- Try Flux schemas first
-			local flux_url = nil
-			if M.match_flux_crd then
-				flux_url = select(1, M.match_flux_crd(api_version, kind))
-			end
-			if flux_url then
-				schema_urls[flux_url] = true
-			else
-				-- Try custom CRDs
-				local crd = M.match_crd(doc)
-				if crd then
-					schema_urls[M.schema_url .. "/" .. crd] = true
-				else
-					-- fallback to core k8s schema
-					local k8s_url = M.get_kubernetes_schema_url(api_version, kind)
-					if k8s_url then
-						schema_urls[k8s_url] = true
-					else
-						vim.notify("No schema found for " .. kind .. " (" .. api_version .. ")", vim.log.levels.WARN)
-					end
-				end
-			end
-		else
-			vim.notify("Document missing apiVersion or kind, skipping schema attach", vim.log.levels.WARN)
-		end
-	end
-
-	-- Attach all collected schemas at once to this buffer
 	local clients = vim.lsp.get_clients({ name = "yamlls" })
 	if #clients == 0 then
 		vim.notify("yaml-language-server is not active.", vim.log.levels.WARN)
@@ -200,22 +166,39 @@ M.init = function(bufnr)
 	yaml_client.config.settings.yaml = yaml_client.config.settings.yaml or {}
 	yaml_client.config.settings.yaml.schemas = yaml_client.config.settings.yaml.schemas or {}
 
-	for url, _ in pairs(schema_urls) do
-		local existing = yaml_client.config.settings.yaml.schemas[url]
-		if existing then
-			-- add buffer name if not present
-			local found = false
-			for _, b in ipairs(existing) do
-				if b == bufname then
-					found = true
-					break
+	local schemas = yaml_client.config.settings.yaml.schemas
+
+	for _, doc in ipairs(docs) do
+		local api_version, kind = M.extract_api_version_and_kind(doc)
+		if api_version and kind then
+			local schema_url = nil
+
+			-- Try Flux schemas first
+			if M.match_flux_crd then
+				schema_url = select(1, M.match_flux_crd(api_version, kind))
+			end
+
+			-- Try custom CRDs
+			if not schema_url then
+				local crd = M.match_crd(doc)
+				if crd then
+					schema_url = M.schema_url .. "/" .. crd
 				end
 			end
-			if not found then
-				table.insert(existing, bufname)
+
+			-- Fallback to core k8s schema
+			if not schema_url then
+				schema_url = M.get_kubernetes_schema_url(api_version, kind)
+			end
+
+			if schema_url then
+				local selector = string.format('.*[?(@.kind=="%s" && @.apiVersion=="%s")]', kind, api_version)
+				schemas[schema_url] = selector
+			else
+				vim.notify("No schema found for " .. kind .. " (" .. api_version .. ")", vim.log.levels.WARN)
 			end
 		else
-			yaml_client.config.settings.yaml.schemas[url] = { bufname }
+			vim.notify("Document missing apiVersion or kind, skipping schema attach", vim.log.levels.WARN)
 		end
 	end
 
@@ -223,7 +206,7 @@ M.init = function(bufnr)
 		settings = yaml_client.config.settings,
 	})
 
-	vim.notify("Attached " .. tostring(vim.tbl_count(schema_urls)) .. " schemas to buffer", vim.log.levels.INFO)
+	vim.notify("Attached schemas using JSON path selectors", vim.log.levels.INFO)
 end
 
 M.list_flux_schemas = function()
