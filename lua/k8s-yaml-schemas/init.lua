@@ -154,8 +154,6 @@ M.init = function(bufnr)
 
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local docs = split_documents(lines)
-	print("Split documents:")
-	print(vim.inspect(docs))
 
 	local clients = vim.lsp.get_clients({ name = "yamlls" })
 	if #clients == 0 then
@@ -170,11 +168,7 @@ M.init = function(bufnr)
 	local schemas = yaml_client.config.settings.yaml.schemas
 
 	for _, doc in ipairs(docs) do
-		print("--- Document ---")
-		print(doc)
 		local api_version, kind = M.extract_api_version_and_kind(doc)
-		print("apiVersion:", api_version)
-		print("kind:", kind)
 		if api_version and kind then
 			local schema_url = nil
 
