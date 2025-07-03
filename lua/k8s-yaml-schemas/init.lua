@@ -199,6 +199,12 @@ M.init = function(bufnr)
 			if schema_url then
 				local selector = string.format('.*[?(@.kind=="%s" && @.apiVersion=="%s")]', kind, api_version)
 				schemas[schema_url] = selector
+
+				-- 🔍 Add logging
+				print("📦 Attaching schema:")
+				print("URL: " .. schema_url)
+				print("Selector: " .. selector)
+				vim.notify("📦 Attached schema: " .. schema_url, vim.log.levels.INFO)
 			else
 				vim.notify("No schema found for " .. kind .. " (" .. api_version .. ")", vim.log.levels.WARN)
 			end
