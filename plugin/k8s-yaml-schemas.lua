@@ -5,7 +5,7 @@ vim.api.nvim_create_autocmd("FileType", {
 		local clients = vim.lsp.get_clients({ name = "yamlls", bufnr = bufnr })
 
 		if #clients > 0 then
-			require("k8s_yaml_schema").init(bufnr)
+			require("k8s-yaml|schemas").init(bufnr)
 		else
 			vim.api.nvim_create_autocmd("LspAttach", {
 				once = true,
@@ -13,7 +13,7 @@ vim.api.nvim_create_autocmd("FileType", {
 				callback = function(lsp_args)
 					local client = vim.lsp.get_client_by_id(lsp_args.data.client_id)
 					if client and client.name == "yamlls" then
-						require("k8s_yaml_schema").init(bufnr)
+						require("k8s-yaml-schemas").init(bufnr)
 					end
 				end,
 			})

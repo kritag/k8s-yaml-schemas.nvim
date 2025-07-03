@@ -12,6 +12,8 @@ local M = {
 }
 
 M.schema_url = "https://raw.githubusercontent.com/" .. M.schemas_catalog .. "/" .. M.schema_catalog_branch
+M.flux_schemas_repo = "fluxcd-community/flux2-schemas"
+M.flux_schema_url = "https://raw.githubusercontent.com/" .. M.flux_schemas_repo .. "/main"
 
 -- List CRD schemas from GitHub (include both json and yaml)
 M.list_github_tree = function()
@@ -119,11 +121,20 @@ M.init = function(bufnr)
 	local buffer_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
 	local crd = M.match_crd(buffer_content)
 
+	local api_version, kind = M.extract_api_version_and_kind(buffer_content)
+
+	-- Try Flux match
+	local flux_url, flux_name = M.match_flux_crd(api_version, kind)
+	if flux_url then
+		M.attach_schema(flux_url, "Flux schema for " .. flux_name, bufnr)
+		return
+	end
+
 	if crd then
 		local schema_url = M.schema_url .. "/" .. crd
 		M.attach_schema(schema_url, "CRD schema for " .. crd, bufnr)
 	else
-		local api_version, kind = M.extract_api_version_and_kind(buffer_content)
+		-- local api_version, kind = M.extract_api_version_and_kind(buffer_content)
 		if api_version and kind then
 			local url = M.get_kubernetes_schema_url(api_version, kind)
 			if url then
@@ -140,6 +151,43 @@ M.init = function(bufnr)
 	end
 end
 
+M.list_flux_schemas = function()
+	if M.schema_cache.flux then
+		return M.schema_cache.flux
+	end
+	local url = M.github_base_api_url .. "/" .. M.flux_schemas_repo .. "/contents"
+	local response = curl.get(url, { headers = M.github_headers })
+	local files = vim.fn.json_decode(response.body)
+	local schemas = {}
+	for _, file in ipairs(files) do
+		if file.name:match("%.json$") and file.name ~= "_definitions.json" and file.name ~= "all.json" then
+			table.insert(schemas, file.name)
+		end
+	end
+	M.schema_cache.flux = schemas
+	return schemas
+end
+
+M.match_flux_crd = function(api_version, kind)
+	local group, version = api_version:match("([^/]+)/([^/]+)")
+	if not group or not version then
+		return nil
+	end
+
+	local group_segment = group:match("([^.]+)")
+	if not group_segment then
+		return nil
+	end
+
+	local expected_filename = kind:lower() .. "-" .. group_segment .. "-" .. version .. ".json"
+	local all_flux = M.list_flux_schemas()
+	for _, fname in ipairs(all_flux) do
+		if fname == expected_filename then
+			return M.flux_schema_url .. "/" .. fname, fname
+		end
+	end
+end
+
 M.setup_autocmd = function()
 	vim.api.nvim_create_autocmd("FileType", {
 		pattern = "yaml",
@@ -148,7 +196,7 @@ M.setup_autocmd = function()
 			local clients = vim.lsp.get_clients({ name = "yamlls", bufnr = bufnr })
 
 			if #clients > 0 then
-				require("k8s_yaml_schema").init(bufnr)
+				require("k8s-yaml-schemas").init(bufnr)
 			else
 				vim.api.nvim_create_autocmd("LspAttach", {
 					once = true,
@@ -156,7 +204,7 @@ M.setup_autocmd = function()
 					callback = function(lsp_args)
 						local client = vim.lsp.get_client_by_id(lsp_args.data.client_id)
 						if client and client.name == "yamlls" then
-							require("k8s_yaml_schema").init(bufnr)
+							require("k8s-yaml-schemas").init(bufnr)
 						end
 					end,
 				})

@@ -33,7 +33,7 @@
   event = "FileType yaml",
   dependencies = { "nvim-lua/plenary.nvim" },
   config = function()
-    require("k8s_yaml_schema").setup_autocmd()
+    require("k8s_yaml_schemas").setup_autocmd()
   end,
 }
 ```
@@ -78,7 +78,7 @@ metadata:
 Want to run it manually?
 
 ```lua
-require("k8s_yaml_schema").init(0) -- 0 = current buffer
+require("k8s_yaml_schemas").init(0) -- 0 = current buffer
 ```
 
 ---
