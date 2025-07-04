@@ -124,7 +124,6 @@ M.init = function(bufnr)
 	local api_version, kind = M.extract_api_version_and_kind(buffer_content)
 
 	-- Try Flux match
-	-- Try Flux match
 	if api_version and kind then
 		local flux_url, flux_name = M.match_flux_crd(api_version, kind)
 		if flux_url then
