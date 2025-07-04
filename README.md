@@ -2,11 +2,11 @@
 
 > Auto-attach Kubernetes & CRD schemas to `yaml-language-server` in Neovim 🧠⚡
 
-`k8s-yaml-schemas.nvim` enhances your YAML editing experience for Kubernetes manifests by dynamically detecting the `apiVersion` and `kind` in your buffer, then attaching the appropriate JSON schema for validation and autocompletion via `yamlls`.
+`k8s-yaml-schemas.nvim` enhances your YAML editing experience for Kubernetes manifests by dynamically detecting the `apiVersion` and `kind` in your buffer, then attaching the appropriate JSON schema for validation and autocompletion via `yamlls`. No file name matching needed!
 
 - 🚀 **Lazy-loadable**: Loads only for `yaml` files
 - 🔎 **Smart detection**: Extracts `apiVersion` and `kind`
-- 🔗 **Dynamic schema fetching**: Supports Kubernetes core + CRDs (via GitHub)
+- 🔗 **Dynamic schema fetching**: Supports Kubernetes core + CRDs + Flux (via GitHub)
 - ✅ **Better LSP UX**: Proper validation, better hover/completion support
 - 🧠 **Schema caching**: Avoids repeated requests
 
@@ -17,6 +17,7 @@
 - Detects and attaches:
   - ✅ Core Kubernetes resource schemas (from [kubernetes-json-schema](https://github.com/yannh/kubernetes-json-schema))
   - 🧩 Custom Resource Definitions (from [datreeio/CRDs-catalog](https://github.com/datreeio/CRDs-catalog))
+  - 🔁 Flux schemas (from [fluxcd-community/flux2-schemas](https://github.com/fluxcd-community/flux2-schemas))
 - Works only when `yaml-language-server` is active
 - Automatically syncs schema configuration with LSP
 - Fully async and performance-aware (uses `plenary.curl`)
@@ -33,7 +34,7 @@
   event = "FileType yaml",
   dependencies = { "nvim-lua/plenary.nvim" },
   config = function()
-    require("k8s_yaml_schemas").setup_autocmd()
+    require("k8s-yaml-schemas").setup_autocmd()
   end,
 }
 ```
@@ -53,10 +54,10 @@
 1. On opening a YAML file, it waits for `yamlls` to attach.
 2. It reads the buffer, extracts `apiVersion` and `kind`.
 3. It tries to match a CRD schema from `datreeio/CRDs-catalog`.
-4. If no CRD matches, it tries the core Kubernetes schema.
+4. If no CRD matches, it tries the core Kubernetes schema, or a Flux schema.
 5. It attaches the found schema to the current buffer via `yamlls`.
 
-No manual YAML schema linking needed.
+No manual YAML schema linking needed, and no file name matching required!
 
 ---
 
@@ -96,6 +97,12 @@ require("k8s_yaml_schemas").init(0) -- 0 = current buffer
 - [yannh/kubernetes-json-schema](https://github.com/yannh/kubernetes-json-schema)
 - [datreeio/CRDs-catalog](https://github.com/datreeio/CRDs-catalog)
 - Inspired by native support in `kubectl explain` and `helm schema-gen`
+
+---
+
+## 🔧 TODO
+
+- Implement support for multiple object definitions in one file. Currentl not supported by `yamlls`. [#946](https://github.com/redhat-developer/yaml-language-server/issues/946)
 
 ---
 
