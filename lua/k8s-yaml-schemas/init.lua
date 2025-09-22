@@ -93,7 +93,8 @@ end
 M.get_kubernetes_schema_url = function(api_version, kind)
 	local version = api_version:match("/([%w%-]+)$") or api_version
 	local schema_name = kind:lower() .. "-" .. version .. ".json"
-	local base_url = "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/refs/heads/master/master/"
+	local base_url =
+		"https://raw.githubusercontent.com/yannh/kubernetes-json-schema/refs/heads/master/master-standalone-strict/"
 
 	local url_with_version = base_url .. schema_name
 	local url_without_version = base_url .. kind:lower() .. ".json"
