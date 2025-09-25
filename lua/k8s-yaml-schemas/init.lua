@@ -55,8 +55,7 @@ M.normalize_crd_name = function(api_version, kind)
 end
 
 -- Match CRD file from GitHub tree
-M.match_crd = function(buffer_content)
-	local api_version, kind = M.extract_api_version_and_kind(buffer_content)
+M.match_crd = function(api_version, kind)
 	local crd_name = M.normalize_crd_name(api_version, kind)
 	if not crd_name then
 		return nil
@@ -120,36 +119,52 @@ M.init = function(bufnr)
 	vim.b[bufnr].schema_attached = true
 
 	local buffer_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
-	local crd = M.match_crd(buffer_content)
 
-	local api_version, kind = M.extract_api_version_and_kind(buffer_content)
-
-	-- Try Flux match
-	if api_version and kind then
-		local flux_url, flux_name = M.match_flux_crd(api_version, kind)
-		if flux_url then
-			M.attach_schema(flux_url, "Flux schema for " .. flux_name, bufnr)
-			return
-		end
-	end
-
-	if crd then
-		local schema_url = M.schema_url .. "/" .. crd
-		M.attach_schema(schema_url, "CRD schema for " .. crd, bufnr)
+	local number_of_k8s_resources = select(2, string.gsub(buffer_content, "apiVersion:", ""))
+	vim.notify("Number of apiVersion occurrences: " .. number_of_k8s_resources, vim.log.levels.DEBUG)
+	if number_of_k8s_resources < 1 then
+		vim.notify("No kubernets resources found in buffer " .. vim.api.nvim_buf_get_name(bufnr), vim.log.levels.DEBUG)
+		return
+	elseif number_of_k8s_resources > 1 then
+		vim.notify(
+			"Multiple resources in a single file not supported. Please split them or ignore the message.",
+			vim.log.levels.INFO
+		)
+		return
 	else
-		-- local api_version, kind = M.extract_api_version_and_kind(buffer_content)
+		local api_version, kind = M.extract_api_version_and_kind(buffer_content)
+
+		local crd = M.match_crd(api_version, kind)
+		-- Try Flux match
 		if api_version and kind then
-			local url = M.get_kubernetes_schema_url(api_version, kind)
-			if url then
-				M.attach_schema(url, "Kubernetes schema for " .. kind, bufnr)
-			else
-				vim.notify("No Kubernetes schema found for " .. kind .. " (" .. api_version .. ")", vim.log.levels.WARN)
+			local flux_url, flux_name = M.match_flux_crd(api_version, kind)
+			if flux_url then
+				M.attach_schema(flux_url, "Flux schema for " .. flux_name, bufnr)
+				return
 			end
+		end
+
+		if crd then
+			local schema_url = M.schema_url .. "/" .. crd
+			M.attach_schema(schema_url, "CRD schema for " .. crd, bufnr)
 		else
-			vim.notify(
-				"No CRD or Kubernetes schema found. Falling back to default LSP configuration.",
-				vim.log.levels.WARN
-			)
+			-- local api_version, kind = M.extract_api_version_and_kind(buffer_content)
+			if api_version and kind then
+				local url = M.get_kubernetes_schema_url(api_version, kind)
+				if url then
+					M.attach_schema(url, "Kubernetes schema for " .. kind, bufnr)
+				else
+					vim.notify(
+						"No Kubernetes schema found for " .. kind .. " (" .. api_version .. ")",
+						vim.log.levels.WARN
+					)
+				end
+			else
+				vim.notify(
+					"No CRD or Kubernetes schema found. Falling back to default LSP configuration.",
+					vim.log.levels.WARN
+				)
+			end
 		end
 	end
 end
