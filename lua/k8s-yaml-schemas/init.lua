@@ -141,6 +141,10 @@ local function default_sources()
 			url_template = "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json",
 		},
 		{
+			name = "OpenShift (internal)",
+			url_template = "https://schemas.apps.os-dts-global.finods.com/openshift/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json",
+		},
+		{
 			name = "OpenShift (melmorabity)",
 			url_template = "https://raw.githubusercontent.com/melmorabity/openshift-json-schemas/refs/heads/main/v4.17-standalone-strict/{{.ResourceKind}}.json",
 			kind_suffix_style = "none",
@@ -256,7 +260,6 @@ local function resolve_schema_url(api_version, kind)
 	if not api_version or not kind then
 		return nil, "missing apiVersion/kind"
 	end
-<<<<<<< HEAD
 	local cfg = load_config()
 	local group = select(1, parse_api_version(api_version))
 	for _, source in ipairs(cfg.sources) do
@@ -267,26 +270,6 @@ local function resolve_schema_url(api_version, kind)
 			if resp and resp.status == 200 then
 				return url, source.name
 			end
-=======
-	local group, version = api_version:match("([^/]+)/([^/]+)")
-	if not group or not version then
-		return nil
-	end
-	-- underscore before version, and lowercase kind
-	return group .. "/" .. kind:lower() .. "_" .. version .. ".json"
-end
-
--- Match CRD file from GitHub tree
-M.match_crd = function(api_version, kind)
-	local crd_name = M.normalize_crd_name(api_version, kind)
-	if not crd_name then
-		return nil
-	end
-	local all_crds = M.list_github_tree()
-	for _, crd in ipairs(all_crds) do
-		if crd:match(crd_name) then
-			return crd
->>>>>>> 0b911056adff0209c97e2f67f8128757df448a2e
 		end
 	end
 	return nil, "no schema resolved"
@@ -327,7 +310,6 @@ M.init = function(bufnr)
 	vim.b[bufnr].schema_attached = true
 
 	local buffer_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
-<<<<<<< HEAD
 	local api_version, kind = M.extract_api_version_and_kind(buffer_content)
 	if not api_version or not kind then
 		vim.notify("No apiVersion/kind detected in buffer.", vim.log.levels.WARN)
@@ -339,92 +321,6 @@ M.init = function(bufnr)
 		M.attach_schema(url, (source_name or "Schema") .. " for " .. kind, bufnr)
 	else
 		vim.notify("No schema source yielded a match for " .. kind .. " (" .. api_version .. ")", vim.log.levels.WARN)
-=======
-
-	local number_of_k8s_resources = select(2, string.gsub(buffer_content, "apiVersion:", ""))
-	vim.notify("Number of apiVersion occurrences: " .. number_of_k8s_resources, vim.log.levels.DEBUG)
-	if number_of_k8s_resources < 1 then
-		vim.notify("No kubernets resources found in buffer " .. vim.api.nvim_buf_get_name(bufnr), vim.log.levels.DEBUG)
-		return
-	elseif number_of_k8s_resources > 1 then
-		vim.notify(
-			"Multiple resources in a single file not supported. Please split them or ignore the message.",
-			vim.log.levels.INFO
-		)
-		return
-	else
-		local api_version, kind = M.extract_api_version_and_kind(buffer_content)
-
-		local crd = M.match_crd(api_version, kind)
-		-- Try Flux match
-		if api_version and kind then
-			local flux_url, flux_name = M.match_flux_crd(api_version, kind)
-			if flux_url then
-				M.attach_schema(flux_url, "Flux schema for " .. flux_name, bufnr)
-				return
-			end
-		end
-
-		if crd then
-			local schema_url = M.schema_url .. "/" .. crd
-			M.attach_schema(schema_url, "CRD schema for " .. crd, bufnr)
-		else
-			-- local api_version, kind = M.extract_api_version_and_kind(buffer_content)
-			if api_version and kind then
-				local url = M.get_kubernetes_schema_url(api_version, kind)
-				if url then
-					M.attach_schema(url, "Kubernetes schema for " .. kind, bufnr)
-				else
-					vim.notify(
-						"No Kubernetes schema found for " .. kind .. " (" .. api_version .. ")",
-						vim.log.levels.WARN
-					)
-				end
-			else
-				vim.notify(
-					"No CRD or Kubernetes schema found. Falling back to default LSP configuration.",
-					vim.log.levels.WARN
-				)
-			end
-		end
-	end
-end
-
-M.list_flux_schemas = function()
-	if M.schema_cache.flux then
-		return M.schema_cache.flux
-	end
-	local url = M.github_base_api_url .. "/" .. M.flux_schemas_repo .. "/contents"
-	local response = curl.get(url, { headers = M.github_headers })
-	local files = vim.fn.json_decode(response.body)
-	local schemas = {}
-	for _, file in ipairs(files) do
-		if file.name:match("%.json$") and file.name ~= "_definitions.json" and file.name ~= "all.json" then
-			table.insert(schemas, file.name)
-		end
-	end
-	M.schema_cache.flux = schemas
-	return schemas
-end
-
-M.match_flux_crd = function(api_version, kind)
-	local group, version = api_version:match("([^/]+)/([^/]+)")
-	if not group or not version then
-		return nil
-	end
-
-	local group_segment = group:match("([^.]+)")
-	if not group_segment then
-		return nil
-	end
-
-	local expected_filename = kind:lower() .. "-" .. group_segment .. "-" .. version .. ".json"
-	local all_flux = M.list_flux_schemas()
-	for _, fname in ipairs(all_flux) do
-		if fname == expected_filename then
-			return M.flux_schema_url .. "/" .. fname, fname
-		end
->>>>>>> 0b911056adff0209c97e2f67f8128757df448a2e
 	end
 end
 
