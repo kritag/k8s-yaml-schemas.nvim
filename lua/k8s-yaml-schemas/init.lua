@@ -1,73 +1,274 @@
+-- lua/k8s-yaml-schemas.lua
 local curl = require("plenary.curl")
-
 local M = {
-	schemas_catalog = "datreeio/CRDs-catalog",
-	schema_catalog_branch = "main",
-	github_base_api_url = "https://api.github.com/repos",
-	github_headers = {
-		Accept = "application/vnd.github+json",
-		["X-GitHub-Api-Version"] = "2022-11-28",
-	},
 	schema_cache = {},
+	config = {
+		-- you can pass `sources` directly via setup(), or point to a config_file
+		config_file = nil, -- e.g., vim.fn.stdpath('config') .. "/k8s-yaml-schemas.json"
+		sources = nil, -- table form of the same schema as the file
+		github_headers = {
+			Accept = "application/vnd.github+json",
+			["X-GitHub-Api-Version"] = "2022-11-28",
+		},
+	},
 }
 
-M.schema_url = "https://raw.githubusercontent.com/" .. M.schemas_catalog .. "/" .. M.schema_catalog_branch
-M.flux_schemas_repo = "fluxcd-community/flux2-schemas"
-M.flux_schema_url = "https://raw.githubusercontent.com/" .. M.flux_schemas_repo .. "/main"
-
--- List CRD schemas from GitHub (include both json and yaml)
-M.list_github_tree = function()
-	if M.schema_cache.trees then
-		return M.schema_cache.trees
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Small template renderer: replaces {{.Var}} with value
+-- Supports variables we compute from apiVersion/kind
+-- Also supports per-source KindSuffix via kind_suffix_style or template string
+-- ─────────────────────────────────────────────────────────────────────────────
+local function render_template(tpl, vars)
+	if not tpl or tpl == "" then
+		return ""
 	end
-	local url = M.github_base_api_url .. "/" .. M.schemas_catalog .. "/git/trees/" .. M.schema_catalog_branch
-	local response = curl.get(url, { headers = M.github_headers, query = { recursive = 1 } })
-	local body = vim.fn.json_decode(response.body)
-	local trees = {}
-	for _, tree in ipairs(body.tree) do
-		if tree.type == "blob" and (tree.path:match("%.json$") or tree.path:match("%.yaml$")) then
-			table.insert(trees, tree.path)
+	return (
+		tpl:gsub("{{%s*%.([%w_]+)%s*}}", function(key)
+			local v = vars[key]
+			return v ~= nil and tostring(v) or ""
+		end)
+	)
+end
+
+local function parse_api_version(av)
+	-- returns group (string or ""), version (string)
+	if not av or av == "" then
+		return "", ""
+	end
+	local g, v = av:match("^([^/]+)/([^/]+)$")
+	if g and v then
+		return g, v
+	end
+	-- core: e.g. "v1"
+	return "", av
+end
+
+local function first_group_segment(group)
+	if not group or group == "" then
+		return ""
+	end
+	local seg = group:match("([^.]+)")
+	return seg or group
+end
+
+local function compute_kind_suffix(style, vars, custom_tpl)
+	if style == "none" then
+		return ""
+	elseif style == "flux" then
+		-- -<GroupSegment>-<version>
+		local gs = vars.GroupSegment or ""
+		local v = vars.ResourceAPIVersion or ""
+		if gs == "" then
+			return "-" .. v
+		end
+		return "-" .. gs .. "-" .. v
+	elseif style == "k8s" then
+		-- -<version>
+		return "-" .. (vars.ResourceAPIVersion or "")
+	elseif type(style) == "string" and style ~= "" and style ~= "flux" and style ~= "k8s" then
+		-- assume custom template string (e.g. "-{{.GroupSegment}}-{{.ResourceAPIVersion}}")
+		return render_template(style, vars)
+	elseif custom_tpl and custom_tpl ~= "" then
+		return render_template(custom_tpl, vars)
+	else
+		-- default: -<version>
+		return "-" .. (vars.ResourceAPIVersion or "")
+	end
+end
+
+local function load_file_if_exists(path)
+	if not path or path == "" then
+		return nil
+	end
+	local stat = vim.loop.fs_stat(path)
+	if not stat or stat.type ~= "file" then
+		return nil
+	end
+	local ok, data = pcall(vim.fn.readfile, path)
+	if not ok then
+		vim.notify("k8s-yaml-schemas: failed reading " .. path, vim.log.levels.WARN)
+		return nil
+	end
+	return table.concat(data, "\n")
+end
+
+local function parse_config_string(str, path_hint)
+	-- detect by extension: .json or .yaml/.yml, else try JSON then YAML
+	local function try_json()
+		local ok, decoded = pcall(vim.fn.json_decode, str)
+		return ok and decoded or nil
+	end
+	local function try_yaml()
+		if not vim.fn.has("nvim-0.10") == 1 then
+			return nil
+		end
+		if not vim.json or not vim.json.decode then
+			-- nvim <= 0.9: fall back to crude yaml via tiny parser
+			return nil
+		end
+		return nil
+	end
+	if path_hint and path_hint:match("%.json$") then
+		return try_json()
+	elseif path_hint and (path_hint:match("%.ya?ml$")) then
+		-- best-effort yaml using community parser if present; else naive unmarshal
+		-- Prefer plenary.yaml if available
+		local ok_yaml, yaml = pcall(require, "yaml")
+		if ok_yaml and yaml and yaml.load then
+			local ok, t = pcall(yaml.load, str)
+			if ok then
+				return t
+			end
+		end
+		-- fallback: try json anyway
+		return try_json()
+	else
+		return try_json()
+	end
+end
+
+local function default_sources()
+	-- Mirrors your requested templates & order
+	return {
+		{
+			name = "Flux",
+			url_template = "https://raw.githubusercontent.com/fluxcd-community/flux2-schemas/refs/heads/main/{{.ResourceKind}}{{.KindSuffix}}.json",
+			kind_suffix_style = "flux",
+			when = { group_regex = "(toolkit%.fluxcd%.io|fluxcd%.io)" },
+		},
+		{
+			name = "Datree CRDs",
+			url_template = "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json",
+		},
+		{
+			name = "OpenShift (melmorabity)",
+			url_template = "https://raw.githubusercontent.com/melmorabity/openshift-json-schemas/refs/heads/main/v4.17-standalone-strict/{{.ResourceKind}}.json",
+			kind_suffix_style = "none",
+			when = { group_regex = "(^|%.)openshift(%.|$)" },
+		},
+		{
+			name = "Kubernetes core",
+			url_template = "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/refs/heads/master/master-standalone-strict/{{.ResourceKind}}{{.KindSuffix}}.json",
+			kind_suffix_style = "k8s",
+			when = { group_regex = "^$" },
+		},
+	}
+end
+
+local function deep_copy(t)
+	return vim.deepcopy(t)
+end
+
+local function load_config()
+	if M.schema_cache._config_loaded then
+		return M.schema_cache._effective_config
+	end
+
+	local cfg = deep_copy(M.config)
+	local file = cfg.config_file
+		or vim.env.K8S_YAML_SCHEMAS_CONFIG
+		or (vim.fn.stdpath("config") .. "/k8s-yaml-schemas.json")
+
+	local sources_tbl = cfg.sources
+	if not sources_tbl then
+		local content = load_file_if_exists(file)
+		if content then
+			local decoded = parse_config_string(content, file)
+			if type(decoded) == "table" and type(decoded.sources) == "table" then
+				sources_tbl = decoded.sources
+			end
 		end
 	end
-	M.schema_cache.trees = trees
-	return trees
+
+	if not sources_tbl then
+		sources_tbl = default_sources()
+	end
+
+	-- normalize: ensure each source has required fields
+	for _, s in ipairs(sources_tbl) do
+		s.name = s.name or "unnamed"
+		s.url_template = assert(s.url_template, ("source '%s' missing url_template"):format(s.name))
+	end
+
+	local effective = {
+		sources = sources_tbl,
+		github_headers = cfg.github_headers,
+	}
+
+	M.schema_cache._effective_config = effective
+	M.schema_cache._config_loaded = true
+	return effective
 end
 
--- Extract apiVersion and kind from buffer content
-M.extract_api_version_and_kind = function(buffer_content)
-	buffer_content = buffer_content:gsub("%-%-%-%s*\n", "")
-	local api_version = buffer_content:match("apiVersion:%s*([%w%p]+)")
-	local kind = buffer_content:match("kind:%s*([%w%-]+)")
-	return api_version, kind
+-- User-facing setup() to override config_file or inline sources
+M.setup = function(opts)
+	M.config = vim.tbl_deep_extend("force", M.config, opts or {})
+	-- allow reload
+	M.schema_cache._config_loaded = false
 end
 
--- Normalize CRD filename: pluralize kind, ignore version in filename
-M.normalize_crd_name = function(api_version, kind)
+-- Build the variables used in template expansion
+local function build_vars(api_version, kind, source)
+	local group, version = parse_api_version(api_version or "")
+	local vars = {
+		Group = group or "",
+		ResourceAPIVersion = version or "",
+		ResourceKind = (kind or ""):lower(),
+		GroupSegment = first_group_segment(group or ""),
+		KindSuffix = "", -- filled below
+	}
+
+	local style = source.kind_suffix_style
+	local custom_tpl = source.kind_suffix_template
+	vars.KindSuffix = compute_kind_suffix(style, vars, custom_tpl)
+	return vars
+end
+
+-- Check if source should apply based on `when` conditions
+local function source_matches(source, group, kind)
+	local w = source.when
+	if not w then
+		return true
+	end
+
+	if w.group_regex and w.group_regex ~= "" then
+		local ok, m = pcall(function()
+			return (group or ""):match(w.group_regex)
+		end)
+		if not ok or m == nil then
+			return false
+		end
+	end
+	if w.kind_in and type(w.kind_in) == "table" then
+		local set = {}
+		for _, k in ipairs(w.kind_in) do
+			set[k:lower()] = true
+		end
+		if not set[(kind or ""):lower()] then
+			return false
+		end
+	end
+	return true
+end
+
+-- Try sources in order; return first 200
+local function resolve_schema_url(api_version, kind)
 	if not api_version or not kind then
-		return nil
+		return nil, "missing apiVersion/kind"
 	end
-	local group, version = api_version:match("([^/]+)/([^/]+)")
-	if not group or not version then
-		return nil
-	end
-	-- underscore before version, and lowercase kind
-	return group .. "/" .. kind:lower() .. "_" .. version .. ".json"
-end
-
--- Match CRD file from GitHub tree
-M.match_crd = function(buffer_content)
-	local api_version, kind = M.extract_api_version_and_kind(buffer_content)
-	local crd_name = M.normalize_crd_name(api_version, kind)
-	if not crd_name then
-		return nil
-	end
-	local all_crds = M.list_github_tree()
-	for _, crd in ipairs(all_crds) do
-		if crd:match(crd_name) then
-			return crd
+	local cfg = load_config()
+	local group = select(1, parse_api_version(api_version))
+	for _, source in ipairs(cfg.sources) do
+		if source_matches(source, group, kind) then
+			local vars = build_vars(api_version, kind, source)
+			local url = render_template(source.url_template, vars)
+			local resp = curl.get(url, { headers = cfg.github_headers, timeout = 8000 })
+			if resp and resp.status == 200 then
+				return url, source.name
+			end
 		end
 	end
-	return nil
+	return nil, "no schema resolved"
 end
 
 -- Attach schema to current buffer, scoped by filename
@@ -89,27 +290,12 @@ M.attach_schema = function(schema_url, description, bufnr)
 	vim.notify("Attached schema: " .. description, vim.log.levels.INFO)
 end
 
--- Kubernetes core schema URL fallback
-M.get_kubernetes_schema_url = function(api_version, kind)
-	local version = api_version:match("/([%w%-]+)$") or api_version
-	local schema_name = kind:lower() .. "-" .. version .. ".json"
-	local base_url =
-		"https://raw.githubusercontent.com/yannh/kubernetes-json-schema/refs/heads/master/master-standalone-strict/"
-
-	local url_with_version = base_url .. schema_name
-	local url_without_version = base_url .. kind:lower() .. ".json"
-
-	local r1 = curl.get(url_with_version, { headers = M.github_headers })
-	if r1.status == 200 then
-		return url_with_version
-	end
-
-	local r2 = curl.get(url_without_version, { headers = M.github_headers })
-	if r2.status == 200 then
-		return url_without_version
-	end
-
-	return nil
+-- Extract apiVersion and kind from buffer content
+M.extract_api_version_and_kind = function(buffer_content)
+	buffer_content = buffer_content:gsub("%-%-%-%s*\n", "")
+	local api_version = buffer_content:match("apiVersion:%s*([%w%p]+)")
+	local kind = buffer_content:match("kind:%s*([%w%-]+)")
+	return api_version, kind
 end
 
 -- Main entrypoint to attach schemas for a buffer
@@ -120,74 +306,17 @@ M.init = function(bufnr)
 	vim.b[bufnr].schema_attached = true
 
 	local buffer_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
-	local crd = M.match_crd(buffer_content)
-
 	local api_version, kind = M.extract_api_version_and_kind(buffer_content)
-
-	-- Try Flux match
-	if api_version and kind then
-		local flux_url, flux_name = M.match_flux_crd(api_version, kind)
-		if flux_url then
-			M.attach_schema(flux_url, "Flux schema for " .. flux_name, bufnr)
-			return
-		end
+	if not api_version or not kind then
+		vim.notify("No apiVersion/kind detected in buffer.", vim.log.levels.WARN)
+		return
 	end
 
-	if crd then
-		local schema_url = M.schema_url .. "/" .. crd
-		M.attach_schema(schema_url, "CRD schema for " .. crd, bufnr)
+	local url, source_name = resolve_schema_url(api_version, kind)
+	if url then
+		M.attach_schema(url, (source_name or "Schema") .. " for " .. kind, bufnr)
 	else
-		-- local api_version, kind = M.extract_api_version_and_kind(buffer_content)
-		if api_version and kind then
-			local url = M.get_kubernetes_schema_url(api_version, kind)
-			if url then
-				M.attach_schema(url, "Kubernetes schema for " .. kind, bufnr)
-			else
-				vim.notify("No Kubernetes schema found for " .. kind .. " (" .. api_version .. ")", vim.log.levels.WARN)
-			end
-		else
-			vim.notify(
-				"No CRD or Kubernetes schema found. Falling back to default LSP configuration.",
-				vim.log.levels.WARN
-			)
-		end
-	end
-end
-
-M.list_flux_schemas = function()
-	if M.schema_cache.flux then
-		return M.schema_cache.flux
-	end
-	local url = M.github_base_api_url .. "/" .. M.flux_schemas_repo .. "/contents"
-	local response = curl.get(url, { headers = M.github_headers })
-	local files = vim.fn.json_decode(response.body)
-	local schemas = {}
-	for _, file in ipairs(files) do
-		if file.name:match("%.json$") and file.name ~= "_definitions.json" and file.name ~= "all.json" then
-			table.insert(schemas, file.name)
-		end
-	end
-	M.schema_cache.flux = schemas
-	return schemas
-end
-
-M.match_flux_crd = function(api_version, kind)
-	local group, version = api_version:match("([^/]+)/([^/]+)")
-	if not group or not version then
-		return nil
-	end
-
-	local group_segment = group:match("([^.]+)")
-	if not group_segment then
-		return nil
-	end
-
-	local expected_filename = kind:lower() .. "-" .. group_segment .. "-" .. version .. ".json"
-	local all_flux = M.list_flux_schemas()
-	for _, fname in ipairs(all_flux) do
-		if fname == expected_filename then
-			return M.flux_schema_url .. "/" .. fname, fname
-		end
+		vim.notify("No schema source yielded a match for " .. kind .. " (" .. api_version .. ")", vim.log.levels.WARN)
 	end
 end
 
@@ -214,6 +343,12 @@ M.setup_autocmd = function()
 			end
 		end,
 	})
+
+	-- Helper command to reload config on the fly
+	vim.api.nvim_create_user_command("K8sSchemasReload", function()
+		M.schema_cache._config_loaded = false
+		vim.notify("k8s-yaml-schemas: configuration reloaded", vim.log.levels.INFO)
+	end, {})
 end
 
 return M
