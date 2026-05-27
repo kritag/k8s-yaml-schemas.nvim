@@ -46,6 +46,81 @@
 - Neovim `>=0.8`
 - [yaml-language-server](https://github.com/redhat-developer/yaml-language-server) via `lspconfig`
 - [`plenary.nvim`](https://github.com/nvim-lua/plenary.nvim)
+- [`yq`](https://github.com/mikefarah/yq) — required for YAML config files (optional if using JSON)
+
+---
+
+## ⚙️ Configuration
+
+By default, the plugin ships with built-in sources (Flux, Datree CRDs, OpenShift, Kubernetes). You can override them entirely via a config file — useful for adding private/internal schema servers.
+
+The config file is looked up in this order:
+1. `config_file` passed to `setup()`
+2. `$K8S_YAML_SCHEMAS_CONFIG` environment variable
+3. `~/.config/nvim/k8s-yaml-schemas.json` (default)
+
+Both `.yaml` and `.json` formats are supported (YAML requires `yq` in `$PATH`).
+
+### Config file format
+
+```yaml
+sources:
+  - name: Flux
+    url_template: "https://raw.githubusercontent.com/fluxcd-community/flux2-schemas/refs/heads/main/{{.ResourceKind}}{{.KindSuffix}}.json"
+    kind_suffix_style: flux
+    when:
+      group_regex: "(toolkit\\.fluxcd\\.io|fluxcd\\.io)"
+
+  - name: Datree CRDs
+    url_template: "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
+
+  - name: Kubernetes (yannh)
+    url_template: "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/refs/heads/master/master-standalone-strict/{{.ResourceKind}}{{.KindSuffix}}.json"
+    kind_suffix_style: flux
+```
+
+### Available template variables
+
+| Variable | Example | Description |
+|---|---|---|
+| `{{.ResourceKind}}` | `cronjob` | Lowercased `kind` |
+| `{{.Group}}` | `batch` | API group (empty for core) |
+| `{{.ResourceAPIVersion}}` | `v1` | Version part of `apiVersion` |
+| `{{.GroupSegment}}` | `batch` | First segment of group |
+| `{{.KindSuffix}}` | `-batch-v1` | Computed suffix (see below) |
+
+### `kind_suffix_style` values
+
+| Style | Suffix produced | Example filename |
+|---|---|---|
+| `flux` | `-<group>-<version>` or `-<version>` for core | `cronjob-batch-v1.json` |
+| `k8s` | `-<version>` | `cronjob-v1.json` |
+| `none` | _(empty)_ | `cronjob.json` |
+| _(custom template)_ | e.g. `"-{{.GroupSegment}}-{{.ResourceAPIVersion}}"` | custom |
+
+### `when` conditions
+
+Sources can be filtered with a `when` block:
+
+```yaml
+when:
+  group_regex: "^$"          # only core group (Pod, Service, …)
+  kind_in: ["Deployment"]    # restrict to specific kinds
+```
+
+### Pointing to a custom config file
+
+```lua
+require("k8s-yaml-schemas").setup({
+  config_file = vim.fn.expand("~/.config/k8s/k8s-yaml-schemas.yaml"),
+})
+```
+
+To reload the config at runtime (e.g. after editing the file):
+
+```vim
+:K8sSchemasReload
+```
 
 ---
 

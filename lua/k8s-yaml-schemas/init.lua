@@ -93,35 +93,25 @@ local function load_file_if_exists(path)
 end
 
 local function parse_config_string(str, path_hint)
-	-- detect by extension: .json or .yaml/.yml, else try JSON then YAML
 	local function try_json()
 		local ok, decoded = pcall(vim.fn.json_decode, str)
 		return ok and decoded or nil
 	end
-	local function try_yaml()
-		if not vim.fn.has("nvim-0.10") == 1 then
+	local function try_yq(path)
+		if not path or path == "" then
 			return nil
 		end
-		if not vim.json or not vim.json.decode then
-			-- nvim <= 0.9: fall back to crude yaml via tiny parser
+		local result = vim.fn.system({ "yq", "-o=json", path })
+		if vim.v.shell_error ~= 0 or not result or result == "" then
 			return nil
 		end
-		return nil
+		local ok, decoded = pcall(vim.fn.json_decode, result)
+		return ok and decoded or nil
 	end
 	if path_hint and path_hint:match("%.json$") then
 		return try_json()
-	elseif path_hint and (path_hint:match("%.ya?ml$")) then
-		-- best-effort yaml using community parser if present; else naive unmarshal
-		-- Prefer plenary.yaml if available
-		local ok_yaml, yaml = pcall(require, "yaml")
-		if ok_yaml and yaml and yaml.load then
-			local ok, t = pcall(yaml.load, str)
-			if ok then
-				return t
-			end
-		end
-		-- fallback: try json anyway
-		return try_json()
+	elseif path_hint and path_hint:match("%.ya?ml$") then
+		return try_yq(path_hint) or try_json()
 	else
 		return try_json()
 	end
@@ -141,20 +131,16 @@ local function default_sources()
 			url_template = "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json",
 		},
 		{
-			name = "OpenShift (internal)",
-			url_template = "https://schemas.apps.os-dts-global.finods.com/openshift/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json",
-		},
-		{
 			name = "OpenShift (melmorabity)",
 			url_template = "https://raw.githubusercontent.com/melmorabity/openshift-json-schemas/refs/heads/main/v4.17-standalone-strict/{{.ResourceKind}}.json",
 			kind_suffix_style = "none",
 			when = { group_regex = "(^|%.)openshift(%.|$)" },
 		},
 		{
-			name = "Kubernetes core",
+			name = "Kubernetes (yannh)",
 			url_template = "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/refs/heads/master/master-standalone-strict/{{.ResourceKind}}{{.KindSuffix}}.json",
-			kind_suffix_style = "k8s",
-			when = { group_regex = "^$" },
+			-- yannh filenames use group-version suffix: cronjob-batch-v1.json, pod-v1.json
+			kind_suffix_style = "flux",
 		},
 	}
 end
