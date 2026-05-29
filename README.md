@@ -159,6 +159,12 @@ require("k8s_yaml_schemas").init(0) -- 0 = current buffer
 
 ---
 
+## 🔒 SOPS-encrypted files
+
+Files encrypted with [SOPS](https://github.com/getsops/sops) contain a top-level `sops:` key that is not part of any Kubernetes schema. The plugin detects this automatically and skips schema attachment for those files, avoiding false-positive validation errors.
+
+---
+
 ## 🧪 Debugging
 
 - Check for messages via `:messages`

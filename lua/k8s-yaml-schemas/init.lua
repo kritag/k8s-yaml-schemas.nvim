@@ -124,7 +124,7 @@ local function default_sources()
 			name = "Flux",
 			url_template = "https://raw.githubusercontent.com/fluxcd-community/flux2-schemas/refs/heads/main/{{.ResourceKind}}{{.KindSuffix}}.json",
 			kind_suffix_style = "flux",
-			when = { group_regex = "(toolkit%.fluxcd%.io|fluxcd%.io)" },
+			when = { group_regex = "(toolkit\\.fluxcd\\.io|fluxcd\\.io)" },
 		},
 		{
 			name = "Datree CRDs",
@@ -134,7 +134,7 @@ local function default_sources()
 			name = "OpenShift (melmorabity)",
 			url_template = "https://raw.githubusercontent.com/melmorabity/openshift-json-schemas/refs/heads/main/v4.17-standalone-strict/{{.ResourceKind}}.json",
 			kind_suffix_style = "none",
-			when = { group_regex = "(^|%.)openshift(%.|$)" },
+			when = { group_regex = "(^|\\.)openshift(\\.|$)" },
 		},
 		{
 			name = "Kubernetes (yannh)",
@@ -222,10 +222,11 @@ local function source_matches(source, group, kind)
 	end
 
 	if w.group_regex and w.group_regex ~= "" then
-		local ok, m = pcall(function()
-			return (group or ""):match(w.group_regex)
+		local ok, matched = pcall(function()
+			local s = vim.regex("\\v" .. w.group_regex):match_str(group or "")
+			return s ~= nil
 		end)
-		if not ok or m == nil then
+		if not ok or not matched then
 			return false
 		end
 	end
@@ -296,6 +297,13 @@ M.init = function(bufnr)
 	vim.b[bufnr].schema_attached = true
 
 	local buffer_content = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+
+	-- Skip SOPS-encrypted files: the `sops:` top-level key is not part of any
+	-- Kubernetes schema and will always produce false-positive validation errors.
+	if buffer_content:match("^sops:") or buffer_content:match("\nsops:") then
+		return
+	end
+
 	local api_version, kind = M.extract_api_version_and_kind(buffer_content)
 	if not api_version or not kind then
 		vim.notify("No apiVersion/kind detected in buffer.", vim.log.levels.WARN)
