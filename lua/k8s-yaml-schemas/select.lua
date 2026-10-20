@@ -120,6 +120,19 @@ M.pick = function()
 		format_item = function(item)
 			return item.desc and (item.name .. " – " .. item.desc) or item.name
 		end,
+		-- snacks.nvim sizes the list as min(#items, lines * 0.8 - 10), which is fractional for most window
+		-- heights and makes nvim_win_set_config fail ("Number is not integral"). Ignored by other pickers.
+		snacks = {
+			layout = {
+				config = function(layout)
+					for _, box in ipairs(layout.layout) do
+						if box.win == "list" then
+							box.height = math.floor(math.max(math.min(#items, vim.o.lines * 0.8 - 10), 2))
+						end
+					end
+				end,
+			},
+		},
 	}, function(item)
 		M.apply(bufnr, item)
 	end)
