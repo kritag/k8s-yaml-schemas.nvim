@@ -13,8 +13,9 @@ local function label(res)
 	if not name or name == "" then
 		local parts = vim.split((s.uri:gsub("[?#].*", "")), "/", { plain = true })
 		name = (parts[#parts]:gsub("%.[jy]?a?son$", ""):gsub("%.ya?ml$", ""))
-		if name == "schema" then
-			name = parts[#parts - 1]
+		-- uninformative file names: prefix the folder, e.g. "v1.30-standalone/all"
+		if name == "schema" or name == "all" or name == "index" then
+			name = parts[#parts - 1] .. "/" .. name
 		end
 	end
 	if vim.fn.strchars(name) > 34 then
@@ -67,15 +68,14 @@ M.setup_status = function()
 end
 
 -- Attach `url` to the buffer (replacing the current schema). A modeline in the file still wins over it.
-M.set_schema = function(bufnr, url)
+M.set_schema = function(bufnr, url, name)
 	for _, line in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, 5, false)) do
 		if line:find("^#%s*yaml%-language%-server:%s*%$schema=") then
 			vim.notify("This file has a $schema comment, which overrides the schema you picked.", vim.log.levels.WARN)
 			break
 		end
 	end
-	local name = url:gsub("[?#].*", ""):match("([^/]+)$") or url
-	require("k8s-yaml-schemas").attach_schema(url, name, bufnr)
+	require("k8s-yaml-schemas").attach_schema(url, name or url:gsub("[?#].*", ""):match("([^/]+)$") or url, bufnr)
 end
 
 -- vim.ui.select. snacks.nvim sizes the list as min(#items, lines * 0.8 - 10), which is fractional for most
@@ -111,7 +111,7 @@ local function apply_kind(bufnr, source)
 		end
 		local url = k8s.source_url(source, api_version, k)
 		if url then
-			M.set_schema(bufnr, url)
+			M.set_schema(bufnr, url, source.name .. " for " .. k)
 		else
 			vim.notify(("No %s schema for %s (%s)"):format(source.name, k, api_version), vim.log.levels.WARN)
 		end
@@ -138,7 +138,7 @@ local function browse(bufnr, source, url, base)
 		elseif e.up or e.dir then
 			browse(bufnr, source, e.url, base)
 		else
-			M.set_schema(bufnr, e.url)
+			M.set_schema(bufnr, e.url, source.name .. " " .. e.url:sub(#base + 1))
 		end
 	end)
 end
@@ -162,7 +162,7 @@ M.apply = function(bufnr, item)
 				return f.path
 			end, function(f)
 				if f then
-					M.set_schema(bufnr, f.url)
+					M.set_schema(bufnr, f.url, item.source.name .. " " .. f.path)
 				end
 			end)
 		else
@@ -177,7 +177,7 @@ M.apply = function(bufnr, item)
 			end
 		end
 	else
-		M.set_schema(bufnr, item.url)
+		M.set_schema(bufnr, item.url, item.name)
 	end
 end
 
