@@ -64,4 +64,31 @@ M.list = function(source, headers)
 	return files
 end
 
+-- Directory of a template before its first {{variable}}, e.g. "https://host/schemas/"
+M.static_base = function(url_template)
+	local static = url_template:match("^(.-)%{%{") or url_template
+	return static:match("^(.*/)[^/]*$")
+end
+
+-- Entries of a web server directory listing (nginx/apache autoindex): { { name = "group/", dir = true, url = … }, … }
+M.index = function(url)
+	local resp = curl.get(url, { timeout = 15000 })
+	if not resp or resp.status ~= 200 then
+		return nil, ("HTTP %s for the directory listing"):format(resp and resp.status or "no response")
+	end
+	local entries = {}
+	for href in resp.body:gmatch('href="([^"?#]+)"') do
+		if not href:match("^/") and not href:match("^%.%./?$") and not href:match("^https?:") then
+			local dir = href:sub(-1) == "/"
+			if dir or href:match("%.json$") then
+				entries[#entries + 1] = { name = href, dir = dir, url = url .. href }
+			end
+		end
+	end
+	if #entries == 0 then
+		return nil, "no entries in the directory listing"
+	end
+	return entries
+end
+
 return M

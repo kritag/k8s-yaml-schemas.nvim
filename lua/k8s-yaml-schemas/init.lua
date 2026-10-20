@@ -281,24 +281,54 @@ M.source_url = function(source, api_version, kind)
 	end
 end
 
--- Attach schema to current buffer, scoped by filename
-M.attach_schema = function(schema_url, description, bufnr)
-	local clients = vim.lsp.get_clients({ name = "yamlls" })
-	if #clients == 0 then
+-- Forget every schema previously attached to this file, so a new one replaces it instead of adding to it
+local function drop_buffer_schemas(schemas, bufname)
+	for url, files in pairs(schemas) do
+		if type(files) == "table" then
+			files = vim.tbl_filter(function(f)
+				return f ~= bufname
+			end, files)
+			schemas[url] = #files > 0 and files or nil
+		end
+	end
+end
+
+local function yamlls_settings()
+	local client = vim.lsp.get_clients({ name = "yamlls" })[1]
+	if not client then
 		vim.notify("yaml-language-server is not active.", vim.log.levels.WARN)
 		return
 	end
-	local yaml_client = clients[1]
-	yaml_client.config.settings = yaml_client.config.settings or {}
-	yaml_client.config.settings.yaml = yaml_client.config.settings.yaml or {}
-	yaml_client.config.settings.yaml.schemas = yaml_client.config.settings.yaml.schemas or {}
+	client.config.settings = client.config.settings or {}
+	client.config.settings.yaml = client.config.settings.yaml or {}
+	client.config.settings.yaml.schemas = client.config.settings.yaml.schemas or {}
+	return client, client.config.settings.yaml.schemas
+end
+
+-- Attach schema to current buffer, scoped by filename (replaces one attached earlier)
+M.attach_schema = function(schema_url, description, bufnr)
+	local client, schemas = yamlls_settings()
+	if not client then
+		return
+	end
 	local bufname = vim.api.nvim_buf_get_name(bufnr)
-	yaml_client.config.settings.yaml.schemas[schema_url] = { bufname }
-	yaml_client.notify("workspace/didChangeConfiguration", {
-		settings = yaml_client.config.settings,
-	})
+	drop_buffer_schemas(schemas, bufname)
+	schemas[schema_url] = { bufname }
+	client:notify("workspace/didChangeConfiguration", { settings = client.config.settings })
 	vim.notify("Attached schema: " .. description, vim.log.levels.INFO)
 	vim.api.nvim_exec_autocmds("User", { pattern = "K8sSchemasAttached", data = { bufnr = bufnr } })
+end
+
+-- Drop the schema attached to this buffer and detect it again from apiVersion/kind
+M.reset_schema = function(bufnr)
+	local client, schemas = yamlls_settings()
+	if not client then
+		return
+	end
+	drop_buffer_schemas(schemas, vim.api.nvim_buf_get_name(bufnr))
+	client:notify("workspace/didChangeConfiguration", { settings = client.config.settings })
+	vim.b[bufnr].schema_attached = nil
+	M.init(bufnr)
 end
 
 -- Extract apiVersion and kind from buffer content

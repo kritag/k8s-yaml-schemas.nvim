@@ -182,20 +182,19 @@ ______________________________________________________________________
 
 Opens a picker (via `vim.ui.select`, so it becomes a fuzzy finder if you use
 snacks, telescope or fzf-lua) with the full
-[SchemaStore](https://www.schemastore.org) catalog. The chosen schema is written
-as a modeline on the first line of the file, replacing an existing one:
-
-```yaml
-# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
-```
-
-A modeline takes precedence over the schema attached automatically, so this also
+[SchemaStore](https://www.schemastore.org) catalog. The chosen schema replaces the
+one attached to the buffer. Nothing is written to the file, so a private schema
+URL never ends up in your repo. The choice lasts until you close the buffer or
+restart Neovim; after that the schema is detected automatically again. It also
 works to override a wrong match on a Kubernetes manifest.
+
+If the file starts with a `# yaml-language-server: $schema=…` comment, that
+comment still wins, and the plugin warns you about it.
 
 Extra entries sit at the top of the list:
 
-- **Remove schema comment**: deletes the modeline, so auto-detection applies
-  again
+- **Reset to auto-detect**: drops the chosen schema and detects it again from
+  `apiVersion` and `kind`
 - **Custom URL or path…**: prompts for any schema URL or local file
 - **`<source> schemas…`**: one entry per configured source (Flux, Datree CRDs,
   Kubernetes, and any you added). It opens a second picker with every schema
@@ -203,10 +202,12 @@ Extra entries sit at the top of the list:
   the Flux list. Listing works for sources whose `url_template` points at
   `raw.githubusercontent.com`; it reads the repo's file tree through the GitHub
   API (60 requests per hour without a token, so set `GITHUB_TOKEN` if you hit the
-  limit). For any other source, the plugin asks for `apiVersion kind` instead
-  (prefilled from the buffer), builds the URL from the `url_template`, and only
-  writes the modeline if the schema exists. The source's `when` filter is
-  ignored here.
+  limit). For any other source, the plugin looks for a web server directory
+  listing (nginx or Apache autoindex) at the template's fixed path, the part
+  before the first `{{variable}}`, and lets you walk it: pick a folder to go into
+  it, `../` to go back up, or a `.json` file to use it. If there is no listing,
+  it asks for `apiVersion kind` instead (prefilled from the buffer), builds the
+  URL from the `url_template`, and only attaches it if the schema exists. The source's `when` filter is ignored here.
 
 The SchemaStore catalog needs
 [`b0o/SchemaStore.nvim`](https://github.com/b0o/SchemaStore.nvim). Without it,

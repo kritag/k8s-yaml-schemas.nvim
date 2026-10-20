@@ -1,9 +1,7 @@
 -- Show and choose the schema yamlls applies to a YAML buffer.
 -- The active schema label is kept in `vim.b.yaml_schema` (for statuslines);
--- :YamlSchema picks a schema and writes it as a `# yaml-language-server: $schema=` modeline.
+-- :YamlSchema picks a schema and attaches it to the buffer for this session (nothing is written to the file).
 local M = {}
-
-local MODELINE = "# yaml-language-server: $schema="
 
 -- Short label for the schemas yamlls reports for a buffer
 local function label(res)
@@ -68,22 +66,16 @@ M.setup_status = function()
 	})
 end
 
--- Set, replace (or with nil, remove) the schema modeline in the first lines of the buffer
-M.set_modeline = function(bufnr, url)
-	local idx
-	for i, line in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, 5, false)) do
+-- Attach `url` to the buffer (replacing the current schema). A modeline in the file still wins over it.
+M.set_schema = function(bufnr, url)
+	for _, line in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, 5, false)) do
 		if line:find("^#%s*yaml%-language%-server:%s*%$schema=") then
-			idx = i - 1
+			vim.notify("This file has a $schema comment, which overrides the schema you picked.", vim.log.levels.WARN)
 			break
 		end
 	end
-	local new = url and { MODELINE .. url } or {}
-	if idx then
-		vim.api.nvim_buf_set_lines(bufnr, idx, idx + 1, false, new)
-	elseif url then
-		vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, new)
-	end
-	refresh_later(bufnr, 1000)
+	local name = url:gsub("[?#].*", ""):match("([^/]+)$") or url
+	require("k8s-yaml-schemas").attach_schema(url, name, bufnr)
 end
 
 -- vim.ui.select. snacks.nvim sizes the list as min(#items, lines * 0.8 - 10), which is fractional for most
@@ -119,9 +111,34 @@ local function apply_kind(bufnr, source)
 		end
 		local url = k8s.source_url(source, api_version, k)
 		if url then
-			M.set_modeline(bufnr, url)
+			M.set_schema(bufnr, url)
 		else
 			vim.notify(("No %s schema for %s (%s)"):format(source.name, k, api_version), vim.log.levels.WARN)
+		end
+	end)
+end
+
+-- Walk a directory listing: pick a folder to go into it, a .json file to use it
+local function browse(bufnr, source, url, base)
+	local entries, reason = require("k8s-yaml-schemas.catalog").index(url)
+	if not entries then
+		vim.notify(("%s: %s"):format(source.name, reason), vim.log.levels.WARN)
+		return
+	end
+	local items = {}
+	if url ~= base then
+		items[1] = { name = "../", up = true, url = url:gsub("[^/]+/$", "") }
+	end
+	vim.list_extend(items, entries)
+	select(items, source.name .. " " .. url:sub(#base + 1), function(e)
+		return e.name
+	end, function(e)
+		if not e then
+			return
+		elseif e.up or e.dir then
+			browse(bufnr, source, e.url, base)
+		else
+			M.set_schema(bufnr, e.url)
 		end
 	end)
 end
@@ -130,11 +147,11 @@ M.apply = function(bufnr, item)
 	if not item then
 		return
 	elseif item.remove then
-		M.set_modeline(bufnr, nil)
+		require("k8s-yaml-schemas").reset_schema(bufnr)
 	elseif item.custom then
 		vim.ui.input({ prompt = "Schema URL or path: " }, function(value)
 			if value and value ~= "" then
-				M.set_modeline(bufnr, value)
+				M.set_schema(bufnr, value)
 			end
 		end)
 	elseif item.source then
@@ -145,15 +162,22 @@ M.apply = function(bufnr, item)
 				return f.path
 			end, function(f)
 				if f then
-					M.set_modeline(bufnr, f.url)
+					M.set_schema(bufnr, f.url)
 				end
 			end)
 		else
-			vim.notify(("%s: %s. Enter apiVersion and kind instead."):format(item.source.name, reason), vim.log.levels.INFO)
-			apply_kind(bufnr, item.source)
+			-- not on GitHub: browse the server's directory listing, if it has one
+			local catalog = require("k8s-yaml-schemas.catalog")
+			local base = catalog.static_base(item.source.url_template)
+			if base and catalog.index(base) then
+				browse(bufnr, item.source, base, base)
+			else
+				vim.notify(("%s: %s. Enter apiVersion and kind instead."):format(item.source.name, reason), vim.log.levels.INFO)
+				apply_kind(bufnr, item.source)
+			end
 		end
 	else
-		M.set_modeline(bufnr, item.url)
+		M.set_schema(bufnr, item.url)
 	end
 end
 
@@ -161,7 +185,7 @@ end
 M.pick = function()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local items = {
-		{ name = "Remove schema comment", remove = true },
+		{ name = "Reset to auto-detect", remove = true },
 		{ name = "Custom URL or path…", custom = true },
 	}
 	-- one entry per configured source (Flux, CRDs, Kubernetes, …); opens that source's schema list
