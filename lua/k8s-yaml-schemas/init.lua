@@ -267,6 +267,11 @@ M.sources = function()
 	return load_config().sources
 end
 
+-- Headers for GitHub requests (from the config)
+M.github_headers = function()
+	return load_config().github_headers
+end
+
 -- Schema URL for one specific source (ignores its `when` filter), or nil if it does not exist
 M.source_url = function(source, api_version, kind)
 	local url = render_template(source.url_template, build_vars(api_version, kind, source))

@@ -197,12 +197,15 @@ Extra entries sit at the top of the list:
 - **Remove schema comment**: deletes the modeline, so auto-detection applies
   again
 - **Custom URL or path…**: prompts for any schema URL or local file
-- **`<source>` for a kind…**: one entry per configured source (Flux, Datree CRDs,
-  Kubernetes, and any you added). It asks for `apiVersion kind`, prefilled from
-  the buffer, builds the URL from that source's `url_template`, and only writes
-  the modeline if the schema exists. Use it to pick a Flux or CRD schema for a
-  file the auto-detection matched wrongly, for example
-  `kustomize.toolkit.fluxcd.io/v1 Kustomization`. The source's `when` filter is
+- **`<source> schemas…`**: one entry per configured source (Flux, Datree CRDs,
+  Kubernetes, and any you added). It opens a second picker with every schema
+  file that source offers, so you can search it, for example `kustomization` in
+  the Flux list. Listing works for sources whose `url_template` points at
+  `raw.githubusercontent.com`; it reads the repo's file tree through the GitHub
+  API (60 requests per hour without a token, so set `GITHUB_TOKEN` if you hit the
+  limit). For any other source, the plugin asks for `apiVersion kind` instead
+  (prefilled from the buffer), builds the URL from the `url_template`, and only
+  writes the modeline if the schema exists. The source's `when` filter is
   ignored here.
 
 The SchemaStore catalog needs

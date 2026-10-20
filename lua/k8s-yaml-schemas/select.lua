@@ -86,6 +86,46 @@ M.set_modeline = function(bufnr, url)
 	refresh_later(bufnr, 1000)
 end
 
+-- vim.ui.select. snacks.nvim sizes the list as min(#items, lines * 0.8 - 10), which is fractional for most
+-- window heights and makes nvim_win_set_config fail ("Number is not integral"); the snacks key fixes that
+-- and is ignored by other pickers.
+local function select(items, prompt, format_item, on_choice)
+	vim.ui.select(items, {
+		prompt = prompt,
+		format_item = format_item,
+		snacks = {
+			layout = {
+				config = function(layout)
+					for _, box in ipairs(layout.layout) do
+						if box.win == "list" then
+							box.height = math.floor(math.max(math.min(#items, vim.o.lines * 0.8 - 10), 2))
+						end
+					end
+				end,
+			},
+		},
+	}, on_choice)
+end
+
+-- Ask for apiVersion and kind and build the URL from one source's template
+local function apply_kind(bufnr, source)
+	local k8s = require("k8s-yaml-schemas")
+	local av, kind = k8s.extract_api_version_and_kind(table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n"))
+	local default = av and kind and (av .. " " .. kind) or ""
+	vim.ui.input({ prompt = source.name .. " schema for (apiVersion kind): ", default = default }, function(value)
+		local api_version, k = (value or ""):match("^%s*(%S+)%s+(%S+)%s*$")
+		if not api_version then
+			return
+		end
+		local url = k8s.source_url(source, api_version, k)
+		if url then
+			M.set_modeline(bufnr, url)
+		else
+			vim.notify(("No %s schema for %s (%s)"):format(source.name, k, api_version), vim.log.levels.WARN)
+		end
+	end)
+end
+
 M.apply = function(bufnr, item)
 	if not item then
 		return
@@ -99,35 +139,34 @@ M.apply = function(bufnr, item)
 		end)
 	elseif item.source then
 		local k8s = require("k8s-yaml-schemas")
-		local av, kind = k8s.extract_api_version_and_kind(table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n"))
-		local default = av and kind and (av .. " " .. kind) or ""
-		vim.ui.input({ prompt = item.source.name .. " schema for (apiVersion kind): ", default = default }, function(value)
-			local api_version, k = (value or ""):match("^%s*(%S+)%s+(%S+)%s*$")
-			if not api_version then
-				return
-			end
-			local url = k8s.source_url(item.source, api_version, k)
-			if url then
-				M.set_modeline(bufnr, url)
-			else
-				vim.notify(("No %s schema for %s (%s)"):format(item.source.name, k, api_version), vim.log.levels.WARN)
-			end
-		end)
+		local files, reason = require("k8s-yaml-schemas.catalog").list(item.source, k8s.github_headers())
+		if files then
+			select(files, item.source.name .. " schema", function(f)
+				return f.path
+			end, function(f)
+				if f then
+					M.set_modeline(bufnr, f.url)
+				end
+			end)
+		else
+			vim.notify(("%s: %s. Enter apiVersion and kind instead."):format(item.source.name, reason), vim.log.levels.INFO)
+			apply_kind(bufnr, item.source)
+		end
 	else
 		M.set_modeline(bufnr, item.url)
 	end
 end
 
--- Pick a schema from the SchemaStore catalog (needs b0o/SchemaStore.nvim) via vim.ui.select
+-- Pick a schema from the SchemaStore catalog (needs b0o/SchemaStore.nvim) or from one of the configured sources
 M.pick = function()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local items = {
 		{ name = "Remove schema comment", remove = true },
 		{ name = "Custom URL or path…", custom = true },
 	}
-	-- one entry per configured source (Flux, CRDs, Kubernetes, …); asks for apiVersion and kind
+	-- one entry per configured source (Flux, CRDs, Kubernetes, …); opens that source's schema list
 	for _, source in ipairs(require("k8s-yaml-schemas").sources()) do
-		items[#items + 1] = { name = source.name .. " for a kind…", desc = "build the URL from this source", source = source }
+		items[#items + 1] = { name = source.name .. " schemas…", desc = "search this source", source = source }
 	end
 	local ok, schemastore = pcall(require, "schemastore")
 	if ok then
@@ -135,25 +174,9 @@ M.pick = function()
 			items[#items + 1] = { name = s.name, desc = s.description, url = s.url }
 		end
 	end
-	vim.ui.select(items, {
-		prompt = "YAML schema",
-		format_item = function(item)
-			return item.desc and (item.name .. " – " .. item.desc) or item.name
-		end,
-		-- snacks.nvim sizes the list as min(#items, lines * 0.8 - 10), which is fractional for most window
-		-- heights and makes nvim_win_set_config fail ("Number is not integral"). Ignored by other pickers.
-		snacks = {
-			layout = {
-				config = function(layout)
-					for _, box in ipairs(layout.layout) do
-						if box.win == "list" then
-							box.height = math.floor(math.max(math.min(#items, vim.o.lines * 0.8 - 10), 2))
-						end
-					end
-				end,
-			},
-		},
-	}, function(item)
+	select(items, "YAML schema", function(item)
+		return item.desc and (item.name .. " – " .. item.desc) or item.name
+	end, function(item)
 		M.apply(bufnr, item)
 	end)
 end
