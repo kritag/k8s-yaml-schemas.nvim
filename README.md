@@ -192,14 +192,22 @@ as a modeline on the first line of the file, replacing an existing one:
 A modeline takes precedence over the schema attached automatically, so this also
 works to override a wrong match on a Kubernetes manifest.
 
-Two extra entries sit at the top of the list:
+Extra entries sit at the top of the list:
 
 - **Remove schema comment**: deletes the modeline, so auto-detection applies
   again
 - **Custom URL or path…**: prompts for any schema URL or local file
+- **`<source>` for a kind…**: one entry per configured source (Flux, Datree CRDs,
+  Kubernetes, and any you added). It asks for `apiVersion kind`, prefilled from
+  the buffer, builds the URL from that source's `url_template`, and only writes
+  the modeline if the schema exists. Use it to pick a Flux or CRD schema for a
+  file the auto-detection matched wrongly, for example
+  `kustomize.toolkit.fluxcd.io/v1 Kustomization`. The source's `when` filter is
+  ignored here.
 
-The catalog needs [`b0o/SchemaStore.nvim`](https://github.com/b0o/SchemaStore.nvim).
-Without it, only the two extra entries are available.
+The SchemaStore catalog needs
+[`b0o/SchemaStore.nvim`](https://github.com/b0o/SchemaStore.nvim). Without it,
+only the extra entries are available.
 
 ______________________________________________________________________
 

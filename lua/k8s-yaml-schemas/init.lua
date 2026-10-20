@@ -262,6 +262,20 @@ local function resolve_schema_url(api_version, kind)
 	return nil, "no schema resolved"
 end
 
+-- Configured sources, in order (used by the schema picker)
+M.sources = function()
+	return load_config().sources
+end
+
+-- Schema URL for one specific source (ignores its `when` filter), or nil if it does not exist
+M.source_url = function(source, api_version, kind)
+	local url = render_template(source.url_template, build_vars(api_version, kind, source))
+	local resp = curl.get(url, { headers = load_config().github_headers, timeout = 8000 })
+	if resp and resp.status == 200 then
+		return url
+	end
+end
+
 -- Attach schema to current buffer, scoped by filename
 M.attach_schema = function(schema_url, description, bufnr)
 	local clients = vim.lsp.get_clients({ name = "yamlls" })
