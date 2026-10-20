@@ -13,6 +13,8 @@ then attaching the appropriate JSON schema for validation and autocompletion via
   GitHub)
 - ✅ **Better LSP UX**: Proper validation, better hover/completion support
 - 🧠 **Schema caching**: Avoids repeated requests
+- 🎯 **Manual override**: `:YamlSchema` picks any SchemaStore schema
+- 🏷️ **Statusline info**: the active schema in `vim.b.yaml_schema`
 
 ______________________________________________________________________
 
@@ -169,6 +171,72 @@ Want to run it manually?
 ```lua
 require("k8s_yaml_schemas").init(0) -- 0 = current buffer
 ```
+
+______________________________________________________________________
+
+## 🎯 Choosing a Schema Manually
+
+```vim
+:YamlSchema
+```
+
+Opens a picker (via `vim.ui.select`, so it becomes a fuzzy finder if you use
+snacks, telescope or fzf-lua) with the full
+[SchemaStore](https://www.schemastore.org) catalog. The chosen schema is written
+as a modeline on the first line of the file, replacing an existing one:
+
+```yaml
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+```
+
+A modeline takes precedence over the schema attached automatically, so this also
+works to override a wrong match on a Kubernetes manifest.
+
+Two extra entries sit at the top of the list:
+
+- **Remove schema comment**: deletes the modeline, so auto-detection applies
+  again
+- **Custom URL or path…**: prompts for any schema URL or local file
+
+The catalog needs [`b0o/SchemaStore.nvim`](https://github.com/b0o/SchemaStore.nvim).
+Without it, only the two extra entries are available.
+
+______________________________________________________________________
+
+## 🏷️ Showing the Active Schema in a Statusline
+
+The plugin asks `yamlls` (`yaml/get/jsonSchema`) which schemas apply to the
+buffer and stores a short label in `vim.b.yaml_schema`, or `no schema` if there
+is none. This covers every source: `yamlls` settings, SchemaStore, a modeline,
+and this plugin. If several schemas apply, the label reads `name +N`.
+
+The label refreshes on `LspAttach`, `BufEnter`, `BufWritePost`, and after the
+plugin attaches a schema. Each refresh fires `User YamlSchemaChanged`, so a
+statusline can redraw on it. Example for
+[lualine](https://github.com/nvim-lualine/lualine.nvim):
+
+```lua
+{
+  function()
+    return vim.b.yaml_schema or ""
+  end,
+  cond = function()
+    return vim.bo.filetype == "yaml" and vim.b.yaml_schema ~= nil
+  end,
+}
+```
+
+```lua
+vim.api.nvim_create_autocmd("User", {
+  pattern = "YamlSchemaChanged",
+  callback = function()
+    require("lualine").refresh()
+  end,
+})
+```
+
+The plugin also fires `User K8sSchemasAttached` (with `data.bufnr`) after it
+hands a schema to `yamlls`.
 
 ______________________________________________________________________
 

@@ -32,3 +32,9 @@ vim.api.nvim_create_autocmd("FileType", {
 vim.api.nvim_create_user_command("K8sSchemasReload", function()
 	require("k8s-yaml-schemas").reload()
 end, {})
+
+-- Keep vim.b.yaml_schema current and let the user pick a schema
+require("k8s-yaml-schemas.select").setup_status()
+vim.api.nvim_create_user_command("YamlSchema", function()
+	require("k8s-yaml-schemas.select").pick()
+end, { desc = "Pick a YAML schema for this buffer" })

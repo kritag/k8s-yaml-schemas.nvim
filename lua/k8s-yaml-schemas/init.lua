@@ -279,6 +279,7 @@ M.attach_schema = function(schema_url, description, bufnr)
 		settings = yaml_client.config.settings,
 	})
 	vim.notify("Attached schema: " .. description, vim.log.levels.INFO)
+	vim.api.nvim_exec_autocmds("User", { pattern = "K8sSchemasAttached", data = { bufnr = bufnr } })
 end
 
 -- Extract apiVersion and kind from buffer content
