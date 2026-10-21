@@ -150,6 +150,44 @@ No manual YAML schema linking needed, and no file name matching required!
 
 ______________________________________________________________________
 
+## 📚 Files With Several Objects
+
+`yamlls` attaches one schema to a whole file, so attaching the first object's
+schema to a file with several objects (`---` separated) marks every other object
+as invalid. When a file has more than one top-level `apiVersion:`, the plugin
+instead maps the file to the `kubernetes` keyword of `yamlls`. `yamlls` then
+picks a schema per document from its `apiVersion` and `kind`: core kinds from its
+built-in Kubernetes schema, custom resources from the CRD store (by default
+[datreeio/CRDs-catalog](https://github.com/datreeio/CRDs-catalog), configurable
+with `yaml.kubernetesCRDStore.url`).
+
+The statusline label reads `kubernetes (per document)` for these files.
+
+Things to know:
+
+- This path does not use your configured `sources`. Only `yamlls`' own Kubernetes
+  and CRD store schemas apply. A custom resource missing from the CRD store shows
+  `Unable to load schema from …` on that document.
+- To use one of your sources as the CRD store instead of datree, name it in
+  `crd_store_source`. Its `url_template` must end in
+  `/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json`, the datree layout.
+  The URL stays in your config file, not in your Neovim config:
+
+```lua
+require("k8s-yaml-schemas").setup({ crd_store_source = "My internal schemas" })
+```
+
+- Files with a single object keep the normal lookup, which does use your sources.
+- Picking a schema with `:YamlSchema` still replaces it for the whole file;
+  "Reset to auto-detect" switches back.
+- To keep the old behavior (first object's schema for the file):
+
+```lua
+require("k8s-yaml-schemas").setup({ multi_document = false })
+```
+
+______________________________________________________________________
+
 ## 🛠️ Example
 
 ```yaml
@@ -223,14 +261,13 @@ is none. This covers every source: `yamlls` settings, SchemaStore, a modeline,
 and this plugin. If several schemas apply, the label reads `name +N`.
 
 The label refreshes on `LspAttach`, `BufEnter`, `BufWritePost`, and after the
-plugin attaches a schema. Each refresh fires `User YamlSchemaChanged`, so a
-statusline can redraw on it. Example for
+plugin attaches a schema, and the statusline is redrawn each time. Example for
 [lualine](https://github.com/nvim-lualine/lualine.nvim):
 
 ```lua
 {
   function()
-    return vim.b.yaml_schema or ""
+    return require("k8s-yaml-schemas.select").status()
   end,
   cond = function()
     return vim.bo.filetype == "yaml" and vim.b.yaml_schema ~= nil
@@ -238,17 +275,13 @@ statusline can redraw on it. Example for
 }
 ```
 
-```lua
-vim.api.nvim_create_autocmd("User", {
-  pattern = "YamlSchemaChanged",
-  callback = function()
-    require("lualine").refresh()
-  end,
-})
-```
+`status()` returns the label. In a file with a schema per document (see below)
+it follows the cursor and shows the kind of the document you are in, for example
+`kubernetes: RoleBinding`. To show only the label, return `vim.b.yaml_schema`
+instead.
 
-The plugin also fires `User K8sSchemasAttached` (with `data.bufnr`) after it
-hands a schema to `yamlls`.
+The plugin fires `User K8sSchemasAttached` (with `data.bufnr`) after it hands a
+schema to `yamlls`.
 
 ______________________________________________________________________
 
@@ -274,14 +307,6 @@ ______________________________________________________________________
 - [yannh/kubernetes-json-schema](https://github.com/yannh/kubernetes-json-schema)
 - [datreeio/CRDs-catalog](https://github.com/datreeio/CRDs-catalog)
 - Inspired by native support in `kubectl explain` and `helm schema-gen`
-
-______________________________________________________________________
-
-## 🔧 TODO
-
-- Implement support for multiple object definitions in one file. Currentl not
-  supported by `yamlls`.
-  [#946](https://github.com/redhat-developer/yaml-language-server/issues/946)
 
 ______________________________________________________________________
 

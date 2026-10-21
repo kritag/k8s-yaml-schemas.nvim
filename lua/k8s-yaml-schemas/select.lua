@@ -1,5 +1,5 @@
 -- Show and choose the schema yamlls applies to a YAML buffer.
--- The active schema label is kept in `vim.b.yaml_schema` (for statuslines);
+-- The active schema label is kept in `vim.b.yaml_schema` (for statuslines; see M.status);
 -- :YamlSchema picks a schema and attaches it to the buffer for this session (nothing is written to the file).
 local M = {}
 
@@ -34,8 +34,9 @@ M.refresh = function(bufnr)
 		if err or not vim.api.nvim_buf_is_valid(bufnr) then
 			return
 		end
-		vim.b[bufnr].yaml_schema = label(res)
-		vim.api.nvim_exec_autocmds("User", { pattern = "YamlSchemaChanged", data = { bufnr = bufnr } })
+		-- with a schema per document, yamlls lists the schemas of every document; show one label instead
+		vim.b[bufnr].yaml_schema = vim.b[bufnr].k8s_schemas_per_document and "kubernetes (per document)" or label(res)
+		vim.cmd.redrawstatus()
 	end, bufnr)
 end
 
@@ -43,6 +44,36 @@ local function refresh_later(bufnr, delay)
 	vim.defer_fn(function()
 		M.refresh(bufnr)
 	end, delay)
+end
+
+-- Text for a statusline: the schema label, or with a schema per document the kind under the cursor
+M.status = function()
+	local label = vim.b.yaml_schema
+	if not label or not vim.b.k8s_schemas_per_document then
+		return label or ""
+	end
+	local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+	local row = vim.api.nvim_win_get_cursor(0)[1]
+	local first, last = 1, #lines
+	for i = row, 1, -1 do
+		if lines[i]:match("^%-%-%-") then
+			first = i + 1
+			break
+		end
+	end
+	for i = row + 1, #lines do
+		if lines[i]:match("^%-%-%-") then
+			last = i - 1
+			break
+		end
+	end
+	for i = first, last do
+		local kind = lines[i]:match("^kind:%s*([%w%-%.]+)")
+		if kind then
+			return "kubernetes: " .. kind
+		end
+	end
+	return label
 end
 
 -- Keep `vim.b.yaml_schema` current

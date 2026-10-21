@@ -10,6 +10,12 @@ local M = {
 			Accept = "application/vnd.github+json",
 			["X-GitHub-Api-Version"] = "2022-11-28",
 		},
+		-- files with several objects: let yamlls pick a schema per document (its `kubernetes` keyword)
+		-- instead of attaching the first object's schema to the whole file
+		multi_document = true,
+		-- name of a source whose schemas yamlls should use for custom resources in those files
+		-- (needs a url_template like ".../{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json")
+		crd_store_source = nil,
 	},
 }
 
@@ -305,6 +311,24 @@ local function yamlls_settings()
 	return client, client.config.settings.yaml.schemas
 end
 
+-- Base URL for yamlls' kubernetesCRDStore from the configured source, or nil
+local function crd_store_url()
+	local name = M.config.crd_store_source
+	if not name then
+		return nil
+	end
+	for _, source in ipairs(load_config().sources) do
+		if source.name == name then
+			local base = source.url_template:match("^(.-)/{{%s*%.Group%s*}}/{{%s*%.ResourceKind%s*}}_{{%s*%.ResourceAPIVersion%s*}}%.json$")
+			if not base then
+				vim.notify(("crd_store_source '%s': url_template must end in /{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"):format(name), vim.log.levels.WARN)
+			end
+			return base
+		end
+	end
+	vim.notify(("crd_store_source '%s' is not a configured source"):format(name), vim.log.levels.WARN)
+end
+
 -- Attach schema to current buffer, scoped by filename (replaces one attached earlier)
 M.attach_schema = function(schema_url, description, bufnr)
 	local client, schemas = yamlls_settings()
@@ -314,6 +338,11 @@ M.attach_schema = function(schema_url, description, bufnr)
 	local bufname = vim.api.nvim_buf_get_name(bufnr)
 	drop_buffer_schemas(schemas, bufname)
 	schemas[schema_url] = { bufname }
+	vim.b[bufnr].k8s_schemas_per_document = schema_url == "kubernetes" or nil
+	local store = schema_url == "kubernetes" and crd_store_url()
+	if store then
+		client.config.settings.yaml.kubernetesCRDStore = { enable = true, url = store }
+	end
 	client:notify("workspace/didChangeConfiguration", { settings = client.config.settings })
 	vim.notify("Attached schema: " .. description, vim.log.levels.INFO)
 	vim.api.nvim_exec_autocmds("User", { pattern = "K8sSchemasAttached", data = { bufnr = bufnr } })
@@ -352,6 +381,14 @@ M.init = function(bufnr)
 	-- Kubernetes schema and will always produce false-positive validation errors.
 	if buffer_content:match("^sops:") or buffer_content:match("\nsops:") then
 		return
+	end
+
+	if M.config.multi_document then
+		local _, objects = ("\n" .. buffer_content):gsub("\napiVersion:", "")
+		if objects > 1 then
+			M.attach_schema("kubernetes", "Kubernetes (one schema per document)", bufnr)
+			return
+		end
 	end
 
 	local api_version, kind = M.extract_api_version_and_kind(buffer_content)
