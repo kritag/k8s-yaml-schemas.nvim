@@ -393,7 +393,8 @@ M.init = function(bufnr)
 
 	local api_version, kind = M.extract_api_version_and_kind(buffer_content)
 	if not api_version or not kind then
-		vim.notify("No apiVersion/kind detected in buffer.", vim.log.levels.WARN)
+		-- most YAML files are not Kubernetes manifests; stay quiet on every open
+		vim.notify("No apiVersion/kind detected in buffer.", vim.log.levels.DEBUG)
 		return
 	end
 
